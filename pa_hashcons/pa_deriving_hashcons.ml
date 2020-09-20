@@ -913,6 +913,19 @@ value generate_pre_hash_binding ctxt rc (name, td) =
   (<:patt< $lid:hash_fname$ >>, rhs, <:vala< [] >>)
 ;
 
+value generate_hashcons_module ctxt rc (name, td) =
+  let loc = loc_of_type_decl td in
+  let modname = "HC_"^name in
+  let node_name = name^"_node" in
+  let pre_eq_name = "preeq_"^name^"_node" in
+  let pre_hash_name = "prehash_"^name^"_node" in
+  <:str_item< module $uid:modname$ = Hashcons.Make(struct
+              type t = $lid:node_name$ ;
+              value equal = $lid:pre_eq_name$ ;
+              value hash = $lid:pre_hash_name$ ;
+              end) >>
+;
+
 end
 ;
 
@@ -949,11 +962,13 @@ value str_item_gen_hashcons name arg = fun [
       ] in
     let pre_eq_bindings = List.map (HC.generate_pre_eq_binding arg rc) rc.HC.type_decls in
     let pre_hash_bindings = List.map (HC.generate_pre_hash_binding arg rc) rc.HC.type_decls in
+    let hashcons_modules = List.map (HC.generate_hashcons_module arg rc) rc.HC.type_decls in
     <:str_item< module $uid:rc.module_name$ = struct
                 open Hashcons ;
                 type $list:new_tdl$ ;
                 value rec $list:pre_eq_bindings$ ;
                 value rec $list:pre_hash_bindings$ ;
+                declare $list:hashcons_modules$ end ;
                 end >>
 | _ -> assert False ]
 ;
