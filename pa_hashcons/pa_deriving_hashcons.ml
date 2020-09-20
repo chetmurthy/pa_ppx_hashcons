@@ -913,9 +913,31 @@ value generate_pre_hash_binding ctxt rc (name, td) =
   (<:patt< $lid:hash_fname$ >>, rhs, <:vala< [] >>)
 ;
 
+value hashcons_module_name (name, td) =
+  match List.find_map (fun a ->
+      match uv a with [
+        <:attribute_body< hashcons_module $uid:mname$ ; >> -> Some mname
+      | _ -> None
+      ]) (uv td.tdAttributes) with [
+    Some n -> n
+  | None -> "HC_"^name
+  ]
+;
+
+value hashcons_constructor_name (name, td) =
+  match List.find_map (fun a ->
+      match uv a with [
+        <:attribute_body< hashcons_constructor $lid:cname$ ; >> -> Some cname
+      | _ -> None
+      ]) (uv td.tdAttributes) with [
+    Some n -> n
+  | None -> "make_"^name
+  ]
+;
+
 value generate_hashcons_module ctxt rc (name, td) =
   let loc = loc_of_type_decl td in
-  let modname = "HC_"^name in
+  let modname = hashcons_module_name (name, td) in
   let node_name = name^"_node" in
   let pre_eq_name = "preeq_"^name^"_node" in
   let pre_hash_name = "prehash_"^name^"_node" in
@@ -924,6 +946,17 @@ value generate_hashcons_module ctxt rc (name, td) =
               value equal = $lid:pre_eq_name$ ;
               value hash = $lid:pre_hash_name$ ;
               end) >>
+;
+
+value generate_hashcons_constructor ctxt rc (name, td) =
+  let loc = loc_of_type_decl td in
+  let modname = hashcons_module_name (name, td) in
+  let consname = hashcons_constructor_name (name, td) in
+  let htname = name^"_ht" in
+  <:str_item< declare
+                 value $lid:htname$ = $uid:modname$.create 10007 ;
+                 value $lid:consname$ x = $uid:modname$.hashcons $lid:htname$ x ;
+              end >>
 ;
 
 end
@@ -963,12 +996,13 @@ value str_item_gen_hashcons name arg = fun [
     let pre_eq_bindings = List.map (HC.generate_pre_eq_binding arg rc) rc.HC.type_decls in
     let pre_hash_bindings = List.map (HC.generate_pre_hash_binding arg rc) rc.HC.type_decls in
     let hashcons_modules = List.map (HC.generate_hashcons_module arg rc) rc.HC.type_decls in
+    let hashcons_constructors = List.map (HC.generate_hashcons_constructor arg rc) rc.HC.type_decls in
     <:str_item< module $uid:rc.module_name$ = struct
                 open Hashcons ;
                 type $list:new_tdl$ ;
                 value rec $list:pre_eq_bindings$ ;
                 value rec $list:pre_hash_bindings$ ;
-                declare $list:hashcons_modules$ end ;
+                declare $list:hashcons_modules @ hashcons_constructors$ end ;
                 end >>
 | _ -> assert False ]
 ;
@@ -976,7 +1010,7 @@ value str_item_gen_hashcons name arg = fun [
 Pa_deriving.(Registry.add PI.{
   name = "hashcons"
 ; alternates = []
-; options = ["optional"; "module_name"]
+; options = ["optional"; "module_name"; "memo"]
 ; default_options = let loc = Ploc.dummy in [ ("optional", <:expr< False >>) ]
 ; alg_attributes = []
 ; expr_extensions = []

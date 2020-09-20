@@ -4,8 +4,14 @@
 type lam =
     V of int
   | Lam of lam
-  | App of lam * lam
-[@@deriving hashcons { module_name = LAM }]
+  | App of lam * lam[@@hashcons_module HCLam][@@hashcons_constructor lam]
+[@@deriving hashcons { module_name = LAM
+                     ; memo = {
+                         memo = [%typ: lam]
+                       ; memo_int_term = [%typ: int * lam]
+                       ; memo_term_term = [%typ: term * lam]
+                       }
+                     }]
 ;;
 
 type variable = int (* 1..max_var *) ;;
