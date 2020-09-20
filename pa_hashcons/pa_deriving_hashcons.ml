@@ -866,7 +866,7 @@ value generate_pre_hash_binding ctxt rc (name, td) =
            <:expr< $prerec ty$ $lid:x$ >>)) l in
     let xpatt (x, _) = x in
     let subhash (_, x) = x in
-    let rhs = List.fold_right (fun x e -> <:expr< $subhash x$ + $e$ >>) xpatt_subhashs <:expr< 0 >> in
+    let rhs = List.fold_right (fun x e -> <:expr< 19 * $subhash x$ + $e$ >>) xpatt_subhashs <:expr< 0 >> in
     <:expr< (fun ( $list:List.map xpatt xpatt_subhashs$ ) -> $rhs$) >>
 
   | <:ctyp:< { $list:ltl$ } >> ->
@@ -877,7 +877,7 @@ value generate_pre_hash_binding ctxt rc (name, td) =
            <:expr< $prerec ty$ $lid:x$ >>)) ltl in
     let xlpatt (x, _) = x in
     let subhash (_, x) = x in
-    let rhs = List.fold_right (fun x e -> <:expr< $subhash x$ + $e$ >>) xlpatt_subhashs <:expr< 0 >> in
+    let rhs = List.fold_right (fun x e -> <:expr< 19 * $subhash x$ + $e$ >>) xlpatt_subhashs <:expr< 0 >> in
     <:expr< (fun { $list:List.map xlpatt xlpatt_subhashs$ } -> $rhs$) >>
 
   | <:ctyp:< [ $list:l$ ] >> ->
@@ -892,7 +892,7 @@ value generate_pre_hash_binding ctxt rc (name, td) =
           let xpatt (x, _) = x in
           let subhash (_, x) = x in
           let xconspat = Patt.applist <:patt< $uid:ci$ >> (List.map xpatt xpatt_subhashs) in
-          let rhs = List.fold_right (fun x e -> <:expr< $subhash x$ + $e$ >>) xpatt_subhashs <:expr< $int:string_of_int pos$ >> in
+          let rhs = List.fold_right (fun x e -> <:expr< 19 * $subhash x$ + $e$ >>) xpatt_subhashs <:expr< $int:string_of_int pos$ >> in
           (<:patt< $xconspat$ >>, <:vala< None >>, rhs)
         ]) l in
     <:expr< fun [ $list:case_branches$ ] >>
