@@ -23,6 +23,7 @@ module HC = struct
 type t = {
   module_name : string
 ; type_decls : list (string * MLast.type_decl)
+; memo : list (string * MLast.ctyp)
 }
 ;
 value build_context loc ctxt tdl =
@@ -36,9 +37,18 @@ value build_context loc ctxt tdl =
   | exception Failure _ ->
   Ploc.raise loc (Failure "pa_deriving_hashcons: option module_name must be specified")
   ] in
+  let memo = match option ctxt "memo" with [
+    <:expr< { $list:lel$ } >> ->
+    List.map (fun [
+        (<:patt< $lid:memo_fname$ >>, <:expr< [%typ: $type:t$] >>) -> (memo_fname, t)
+      | _ -> Ploc.raise loc (Failure "pa_deriving_hashcons: bad memo record-members")
+      ]) lel
+  | _ -> Ploc.raise loc (Failure "pa_deriving_hashcons: option memo requires a record argument")
+  ] in
   {
     module_name = module_name
   ; type_decls = type_decls
+  ; memo = memo
   }
 ;
 
@@ -133,9 +143,7 @@ value generate_pre_eq_binding ctxt rc (name, td) =
   (<:patt< $lid:eq_fname$ >>, rhs, <:vala< [] >>)
 ;
 
-
-value generate_pre_hash_binding ctxt rc (name, td) =
-  let loc = loc_of_type_decl td in
+value generate_hash_expression loc ctxt rc ty =
   let rec prerec = fun [
     <:ctyp:< $lid:lid$ >> when List.mem_assoc lid rc.type_decls ->
     <:expr< (fun x -> x.hkey) >>
@@ -189,9 +197,25 @@ value generate_pre_hash_binding ctxt rc (name, td) =
                                         Pp_MLast.pp_ctyp z))
 
   ] in
-  let rhs = prerec td.tdDef in
+  prerec ty
+;
+
+value generate_pre_hash_binding ctxt rc (name, td) =
+  let loc = loc_of_type_decl td in
+  let rhs = generate_hash_expression loc ctxt rc td.tdDef in
   let hash_fname = "prehash_"^name^"_node" in
   (<:patt< $lid:hash_fname$ >>, rhs, <:vala< [] >>)
+;
+
+value generate_hash_bindings ctxt rc (name, td) =
+  let loc = loc_of_type_decl td in
+  let node_rhs = generate_hash_expression loc ctxt rc td.tdDef in
+  let node_hash_fname = "hash_"^name^"_node" in
+
+  let hc_rhs = <:expr< (fun (x : $lid:name$) -> x.hkey) >> in
+  let hc_fname = "hash_"^name in
+  [(<:patt< $lid:node_hash_fname$ >>, node_rhs, <:vala< [] >>)
+  ; (<:patt< $lid:hc_fname$ >>, hc_rhs, <:vala< [] >>)]
 ;
 
 value hashcons_module_name (name, td) =
@@ -277,13 +301,15 @@ value str_item_gen_hashcons name arg = fun [
     let pre_eq_bindings = List.map (HC.generate_pre_eq_binding arg rc) rc.HC.type_decls in
     let pre_hash_bindings = List.map (HC.generate_pre_hash_binding arg rc) rc.HC.type_decls in
     let hashcons_modules = List.map (HC.generate_hashcons_module arg rc) rc.HC.type_decls in
+    let hash_bindings = List.concat (List.map (HC.generate_hash_bindings arg rc) rc.HC.type_decls) in
     let hashcons_constructors = List.map (HC.generate_hashcons_constructor arg rc) rc.HC.type_decls in
     <:str_item< module $uid:rc.module_name$ = struct
                 open Hashcons ;
                 type $list:new_tdl$ ;
-                value rec $list:pre_eq_bindings$ ;
-                value rec $list:pre_hash_bindings$ ;
+                value $list:pre_eq_bindings$ ;
+                value $list:pre_hash_bindings$ ;
                 declare $list:hashcons_modules @ hashcons_constructors$ end ;
+                value $list:hash_bindings$ ;
                 end >>
 | _ -> assert False ]
 ;
