@@ -851,6 +851,68 @@ value generate_pre_eq_binding ctxt rc (name, td) =
   let eq_fname = "preeq_"^name^"_node" in
   (<:patt< $lid:eq_fname$ >>, rhs, <:vala< [] >>)
 ;
+
+
+value generate_pre_hash_binding ctxt rc (name, td) =
+  let loc = loc_of_type_decl td in
+  let rec prerec = fun [
+    <:ctyp:< $lid:lid$ >> when List.mem_assoc lid rc.type_decls ->
+    <:expr< (fun x -> x.hkey) >>
+  | <:ctyp:< ( $list:l$ ) >> ->
+    let xpatt_subhashs =
+      List.mapi (fun i ty ->
+          let x = Printf.sprintf "x_%d" i in
+          (<:patt< $lid:x$ >>,
+           <:expr< $prerec ty$ $lid:x$ >>)) l in
+    let xpatt (x, _) = x in
+    let subhash (_, x) = x in
+    let rhs = List.fold_right (fun x e -> <:expr< $subhash x$ + $e$ >>) xpatt_subhashs <:expr< 0 >> in
+    <:expr< (fun ( $list:List.map xpatt xpatt_subhashs$ ) -> $rhs$) >>
+
+  | <:ctyp:< { $list:ltl$ } >> ->
+    let xlpatt_subhashs =
+      List.mapi (fun i (_, id, _, ty, _) ->
+          let x = Printf.sprintf "x_%d" i in
+          ((<:patt< $lid:id$ >>, <:patt< $lid:x$ >>),
+           <:expr< $prerec ty$ $lid:x$ >>)) ltl in
+    let xlpatt (x, _) = x in
+    let subhash (_, x) = x in
+    let rhs = List.fold_right (fun x e -> <:expr< $subhash x$ + $e$ >>) xlpatt_subhashs <:expr< 0 >> in
+    <:expr< (fun { $list:List.map xlpatt xlpatt_subhashs$ } -> $rhs$) >>
+
+  | <:ctyp:< [ $list:l$ ] >> ->
+    let case_branches =
+      List.mapi (fun pos -> fun [
+          <:constructor< $uid:ci$ of $list:tl$ >> ->
+          let xpatt_subhashs =
+            List.mapi (fun i ty ->
+                let x = Printf.sprintf "x_%d" i in
+                (<:patt< $lid:x$ >>,
+                 <:expr< $prerec ty$ $lid:x$ >>)) tl in
+          let xpatt (x, _) = x in
+          let subhash (_, x) = x in
+          let xconspat = Patt.applist <:patt< $uid:ci$ >> (List.map xpatt xpatt_subhashs) in
+          let rhs = List.fold_right (fun x e -> <:expr< $subhash x$ + $e$ >>) xpatt_subhashs <:expr< $int:string_of_int pos$ >> in
+          (<:patt< $xconspat$ >>, <:vala< None >>, rhs)
+        ]) l in
+    <:expr< fun [ $list:case_branches$ ] >>
+
+  | z when List.mem (canon_ctyp z) builtin_types ->
+    <:expr< (fun x -> Hashtbl.hash x) >>
+
+  | <:ctyp:< $lid:lid$ >> ->
+    let eq_name = "prehash_"^lid in
+    <:expr< $lid:eq_name$ >>
+
+  | z -> Ploc.raise loc (Failure Fmt.(str "generate_pre_hash_binding: unhandled type %a"
+                                        Pp_MLast.pp_ctyp z))
+
+  ] in
+  let rhs = prerec td.tdDef in
+  let hash_fname = "prehash_"^name^"_node" in
+  (<:patt< $lid:hash_fname$ >>, rhs, <:vala< [] >>)
+;
+
 end
 ;
 
@@ -886,10 +948,12 @@ value str_item_gen_hashcons name arg = fun [
         <:type_decl< hash_consed +'a = Hashcons.hash_consed 'a >> 
       ] in
     let pre_eq_bindings = List.map (HC.generate_pre_eq_binding arg rc) rc.HC.type_decls in
+    let pre_hash_bindings = List.map (HC.generate_pre_hash_binding arg rc) rc.HC.type_decls in
     <:str_item< module $uid:rc.module_name$ = struct
                 open Hashcons ;
                 type $list:new_tdl$ ;
                 value rec $list:pre_eq_bindings$ ;
+                value rec $list:pre_hash_bindings$ ;
                 end >>
 | _ -> assert False ]
 ;
