@@ -741,9 +741,13 @@ end ;
 module HC = struct
 type t = {
   module_name : string
+; type_decls : list (string * MLast.type_decl)
 }
 ;
 value build_context loc ctxt tdl =
+  let type_decls = List.map (fun (MLast.{tdNam=tdNam} as td) ->
+      (tdNam |> uv |> snd |> uv, td)
+    ) tdl in
   let open Ctxt in
   let module_name = match option ctxt "module_name" with [
     <:expr< $uid:mname$ >> -> mname
@@ -753,7 +757,99 @@ value build_context loc ctxt tdl =
   ] in
   {
     module_name = module_name
+  ; type_decls = type_decls
   }
+;
+
+
+value canon_ctyp ty = Reloc.ctyp (fun _ -> Ploc.dummy) 0 ty ;
+value builtin_types =
+  let loc = Ploc.dummy in
+  List.map canon_ctyp [
+    <:ctyp< string >>
+  ; <:ctyp< int >>
+  ; <:ctyp< int32 >>
+  ; <:ctyp< int64 >>
+  ; <:ctyp< nativeint >>
+  ; <:ctyp< float >>
+  ; <:ctyp< bool >>
+  ; <:ctyp< char >>
+  ]
+;
+
+value generate_pre_eq_binding ctxt rc (name, td) =
+  let loc = loc_of_type_decl td in
+  let rec prerec = fun [
+    <:ctyp:< $lid:lid$ >> when List.mem_assoc lid rc.type_decls ->
+    <:expr< (fun x y -> x == y) >>
+  | <:ctyp:< ( $list:l$ ) >> ->
+    let xpatt_ypatt_subeqs =
+      List.mapi (fun i ty ->
+          let x = Printf.sprintf "x_%d" i in
+          let y = Printf.sprintf "y_%d" i in
+          (<:patt< $lid:x$ >>,
+           <:patt< $lid:y$ >>,
+           <:expr< $prerec ty$ $lid:x$ $lid:y$ >>)) l in
+    let xpatt (x, _, _) = x in
+    let ypatt (_, x, _) = x in
+    let subeq (_, _, x) = x in
+    let rhs = List.fold_right (fun x e -> <:expr< $subeq x$ && $e$ >>) xpatt_ypatt_subeqs <:expr< True >> in
+    <:expr< (fun ( $list:List.map xpatt xpatt_ypatt_subeqs$ )
+            ( $list:List.map ypatt xpatt_ypatt_subeqs$ ) -> $rhs$) >>
+
+  | <:ctyp:< { $list:ltl$ } >> ->
+    let xlpatt_ylpatt_subeqs =
+      List.mapi (fun i (_, id, _, ty, _) ->
+          let x = Printf.sprintf "x_%d" i in
+          let y = Printf.sprintf "y_%d" i in
+          ((<:patt< $lid:id$ >>, <:patt< $lid:x$ >>),
+           (<:patt< $lid:id$ >>, <:patt< $lid:y$ >>),
+           <:expr< $prerec ty$ $lid:x$ $lid:y$ >>)) ltl in
+    let xlpatt (x, _, _) = x in
+    let ylpatt (_, x, _) = x in
+    let subeq (_, _, x) = x in
+    let rhs = List.fold_right (fun x e -> <:expr< $subeq x$ &&  $e$ >>) xlpatt_ylpatt_subeqs <:expr< True >> in
+    <:expr< (fun { $list:List.map xlpatt xlpatt_ylpatt_subeqs$ }
+            { $list:List.map ylpatt xlpatt_ylpatt_subeqs$ } -> $rhs$) >>
+
+  | <:ctyp:< [ $list:l$ ] >> ->
+    let case_branches =
+      List.map (fun [
+          <:constructor< $uid:ci$ of $list:tl$ >> ->
+          let xpatt_ypatt_subeqs =
+            List.mapi (fun i ty ->
+                let x = Printf.sprintf "x_%d" i in
+                let y = Printf.sprintf "y_%d" i in
+                (<:patt< $lid:x$ >>,
+                 <:patt< $lid:y$ >>,
+                 <:expr< $prerec ty$ $lid:x$ $lid:y$ >>)) tl in
+          let xpatt (x, _, _) = x in
+          let ypatt (_, x, _) = x in
+          let subeq (_, _, x) = x in
+          let xconspat = Patt.applist <:patt< $uid:ci$ >> (List.map xpatt xpatt_ypatt_subeqs) in
+          let yconspat = Patt.applist <:patt< $uid:ci$ >> (List.map ypatt xpatt_ypatt_subeqs) in
+          let rhs = List.fold_right (fun x e -> <:expr< $subeq x$ && $e$ >>) xpatt_ypatt_subeqs <:expr< True >> in
+          (<:patt< ($xconspat$, $yconspat$) >>, <:vala< None >>, rhs)
+        ]) l in
+    let case_branches = case_branches @ [
+      (<:patt< _ >>, <:vala< None >>, <:expr< False >>)
+    ] in
+    <:expr< (fun x y -> match (x,y) with [ $list:case_branches$ ] ) >>
+
+  | z when List.mem (canon_ctyp z) builtin_types ->
+    <:expr< (fun x y -> x = y) >>
+
+  | <:ctyp:< $lid:lid$ >> ->
+    let eq_name = "preeq_"^lid in
+    <:expr< $lid:eq_name$ >>
+
+  | z -> Ploc.raise loc (Failure Fmt.(str "generate_pre_eq_binding: unhandled type %a"
+                                        Pp_MLast.pp_ctyp z))
+
+  ] in
+  let rhs = prerec td.tdDef in
+  let eq_fname = "preeq_"^name^"_node" in
+  (<:patt< $lid:eq_fname$ >>, rhs, <:vala< [] >>)
 ;
 end
 ;
@@ -761,7 +857,7 @@ end
 value hashconsed_type_decl ctxt td =
   let loc = loc_of_type_decl td in
   let name = td.tdNam |> uv |> snd |> uv in
-  let data_name = name^"_data" in
+  let data_name = name^"_node" in
   let tyargs =
     let tyvars = td.tdPrm |> uv in
     List.map (fun [
@@ -784,11 +880,17 @@ value str_item_gen_hashcons name arg = fun [
   <:str_item:< type $_flag:_$ $list:tdl$ >> ->
     let rc = HC.build_context loc arg tdl in
     let ll = List.map (hashconsed_type_decl arg) tdl in
-    let tdl = List.concat ll in
-    let tdl = tdl @ [
+    let new_tdl =
+      let tdl = List.concat ll in
+      tdl @ [
         <:type_decl< hash_consed +'a = Hashcons.hash_consed 'a >> 
       ] in
-    <:str_item< module $uid:rc.module_name$ = struct type $list:tdl$ ; end >>
+    let pre_eq_bindings = List.map (HC.generate_pre_eq_binding arg rc) rc.HC.type_decls in
+    <:str_item< module $uid:rc.module_name$ = struct
+                open Hashcons ;
+                type $list:new_tdl$ ;
+                value rec $list:pre_eq_bindings$ ;
+                end >>
 | _ -> assert False ]
 ;
 
