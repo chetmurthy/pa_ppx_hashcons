@@ -1,15 +1,15 @@
 (* camlp5o *)
 (* test_hashcons.ml *)
 
-type lam =
-    V of int
-  | Lam of lam
-  | App of lam * lam[@@hashcons_module HCLam][@@hashcons_constructor lam]
+type term =
+    Ref of int
+  | Abs of term
+  | App of term * term[@@hashcons_module Term][@@hashcons_constructor term]
 [@@deriving hashcons { module_name = LAM
                      ; memo = {
-                         memo = [%typ: lam]
-                       ; memo_int_term = [%typ: int * lam]
-                       ; memo_term_term = [%typ: term * lam]
+                         memo = [%typ: term]
+                       ; memo2_int_term = [%typ: int * term]
+                       ; memo2_term_term = [%typ: term * term]
                        }
                      }]
 ;;

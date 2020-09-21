@@ -218,6 +218,50 @@ value generate_hash_bindings ctxt rc (name, td) =
   ; (<:patt< $lid:hc_fname$ >>, hc_rhs, <:vala< [] >>)]
 ;
 
+value generate_memokey_expression loc ctxt rc ty =
+  let rec prerec = fun [
+    <:ctyp:< $lid:lid$ >> when List.mem_assoc lid rc.type_decls ->
+    <:expr< (fun x -> x.tag) >>
+  | <:ctyp:< ( $list:l$ ) >> ->
+    let xpatt_submemos =
+      List.mapi (fun i ty ->
+          let x = Printf.sprintf "x_%d" i in
+          (<:patt< $lid:x$ >>,
+           <:expr< $prerec ty$ $lid:x$ >>)) l in
+    let xpatt (x, _) = x in
+    let submemo (_, x) = x in
+    let rhs = <:expr< ( $list:List.map submemo xpatt_submemos$ ) >> in
+    <:expr< (fun ( $list:List.map xpatt xpatt_submemos$ ) -> $rhs$) >>
+
+  | z when List.mem (canon_ctyp z) builtin_types ->
+    <:expr< (fun x -> x) >>
+
+  | <:ctyp:< $lid:lid$ >> ->
+    let memo_name = "memo_"^lid in
+    <:expr< $lid:memo_name$ >>
+
+  | z -> Ploc.raise loc (Failure Fmt.(str "generate_memokey_binding: unhandled type %a"
+                                        Pp_MLast.pp_ctyp z))
+
+  ] in
+  prerec ty
+;
+
+value generate_memo_binding ctxt rc (memo_fname, memo_ty) =
+  let loc = loc_of_ctyp memo_ty in
+  let keyexp = generate_memokey_expression loc ctxt rc memo_ty in
+  let rhs = <:expr< fun f ->
+    let h = Hashtbl.create 251 in
+    (fun (x : $memo_ty$) ->
+      let keyval = $keyexp$ x in
+      try Hashtbl.find h keyval
+      with [ Not_found ->
+        let newval = f x in do { Hashtbl.add h keyval newval ; newval }
+      ])
+    >> in
+  (<:patt< $lid:memo_fname$ >>, rhs, <:vala< [] >>)
+;
+
 value hashcons_module_name (name, td) =
   match List.find_map (fun a ->
       match uv a with [
@@ -303,6 +347,7 @@ value str_item_gen_hashcons name arg = fun [
     let hashcons_modules = List.map (HC.generate_hashcons_module arg rc) rc.HC.type_decls in
     let hash_bindings = List.concat (List.map (HC.generate_hash_bindings arg rc) rc.HC.type_decls) in
     let hashcons_constructors = List.map (HC.generate_hashcons_constructor arg rc) rc.HC.type_decls in
+    let memo_bindings = List.map (HC.generate_memo_binding arg rc) rc.HC.memo in
     <:str_item< module $uid:rc.module_name$ = struct
                 open Hashcons ;
                 type $list:new_tdl$ ;
@@ -310,6 +355,7 @@ value str_item_gen_hashcons name arg = fun [
                 value $list:pre_hash_bindings$ ;
                 declare $list:hashcons_modules @ hashcons_constructors$ end ;
                 value $list:hash_bindings$ ;
+                value $list:memo_bindings$ ;
                 end >>
 | _ -> assert False ]
 ;

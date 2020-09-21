@@ -18,17 +18,29 @@ SYNTAX := camlp5o
 OCAMLCFLAGS += -ppopt -pa_passthru-debug 
 
 TESTS= \
-	test_hashcons.byte \
+	lamh.byte lamh.opt \
 
 all: $(TESTS)
 
 test: $(TESTS:.byte=)
 
-% : %.byte
+% : %.opt
 	mkdir -p _build && ./$<
 
-test_hashcons.byte: test_hashcons.cmo
+lamh.byte: test_hashcons.cmo lamh.cmo
 	$(OCAMLFIND) ocamlc $(DEBUG) $(WARNERR) -package $(PACKAGES) \
+	-linkpkg -syntax camlp5o $^ -o $@
+
+lamh.opt: test_hashcons.cmx lamh.cmx
+	$(OCAMLFIND) ocamlopt $(DEBUG) $(WARNERR) -package $(PACKAGES) \
+	-linkpkg -syntax camlp5o $^ -o $@
+
+lamhok.byte: test_hashcons.cmo lamhok.cmo
+	$(OCAMLFIND) ocamlc $(DEBUG) $(WARNERR) -package $(PACKAGES) \
+	-linkpkg -syntax camlp5o $^ -o $@
+
+lamhok.opt: test_hashcons.cmx lamhok.cmx
+	$(OCAMLFIND) ocamlopt $(DEBUG) $(WARNERR) -package $(PACKAGES) \
 	-linkpkg -syntax camlp5o $^ -o $@
 
 clean::
@@ -50,3 +62,6 @@ depend::
 	$(NOT_OCAMLFIND) preprocess $(OCAMLCFLAGS) -package $(PACKAGES),camlp5.pr_o -syntax $(SYNTAX) $< > $@.ppo.ml
 	$(OCAMLFIND) ocamlc $(OCAMLCFLAGS) -package $(PACKAGES) -syntax $(SYNTAX) -c $@.ppo.ml
 	$(OCAMLFIND) ocamlc $(OCAMLCFLAGS) -package $(PACKAGES) -syntax $(SYNTAX) -c $<
+
+.ml.cmx:
+	$(OCAMLFIND) ocamlopt $(OCAMLCFLAGS) -package $(PACKAGES) -syntax $(SYNTAX) -c $<
