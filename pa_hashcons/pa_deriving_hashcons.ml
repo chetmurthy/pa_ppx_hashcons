@@ -234,7 +234,8 @@ value generate_memo_ephemeron_modules loc ctxt rc memo_fname bindings =
         value equal = $generate_eq_expression loc ctxt rc ty$ ;
         value hash = $generate_hash_expression loc ctxt rc ty$ ;
       end)
-    >>]
+    >>
+    ]
   | [(_, _, ty1); (j, _, ty2) :: rest] ->
     let loc = loc_of_ctyp ty2 in
     let mname = Printf.sprintf "HT%d_%s" j memo_fname in
@@ -249,7 +250,28 @@ value generate_memo_ephemeron_modules loc ctxt rc memo_fname bindings =
         value equal = $generate_eq_expression loc ctxt rc ty2$ ;
         value hash = $generate_hash_expression loc ctxt rc ty2$ ;
       end)
-    >> :: (if rest = [] then [] else genrec [ (-1, "", <:ctyp:< ( $ty1$ * $ty2$ ) >>) :: rest]) ]
+    >>
+    :: (if rest = [] then [] else genrec [ (-1, "", <:ctyp:< ( $ty1$ * $ty2$ ) >>) :: rest])
+   ]
+  ] in
+  genrec bindings
+;
+
+value generate_memo_ephemeron_bindings loc ctxt rc memo_fname bindings =
+  let rec genrec = fun [
+    [(i, _, ty)] ->
+    let loc = loc_of_ctyp ty in
+    let mname = Printf.sprintf "HT%d_%s" i memo_fname in
+    let htname = Printf.sprintf "ht%d_%s" i memo_fname in
+    [<:str_item< value $lid:htname$ = $uid:mname$.create 251 >>
+    ]
+  | [(_, _, ty1); (j, _, ty2) :: rest] ->
+    let loc = loc_of_ctyp ty2 in
+    let mname = Printf.sprintf "HT%d_%s" j memo_fname in
+    let htname = Printf.sprintf "ht%d_%s" j memo_fname in
+    [<:str_item< value $lid:htname$ = $uid:mname$.create 251 >>
+    :: (if rest = [] then [] else genrec [ (-1, "", <:ctyp:< ( $ty1$ * $ty2$ ) >>) :: rest])
+   ]
   ] in
   genrec bindings
 ;
@@ -269,7 +291,18 @@ value generate_memo_hash_modules loc ctxt rc memo_fname bindings =
       value equal = $generate_eq_expression loc ctxt rc ty$ ;
       value hash = $generate_hash_expression loc ctxt rc ty$ ;
     end)
-    >>]
+    >>
+  ]
+;
+
+value generate_memo_hash_bindings loc ctxt rc memo_fname bindings =
+  if bindings = [] then [] else
+  let types = List.map (fun (_, _, ty) -> ty) bindings in
+  let ((i, _, _), _) = sep_last bindings in
+  let mname = Printf.sprintf "HT%d_%s" i memo_fname in
+  let htname = Printf.sprintf "ht%d_%s" i memo_fname in
+  [<:str_item< value $lid:htname$ = $uid:mname$.create 251 >>
+  ]
 ;
 
 value generate_memo_items loc ctxt rc (memo_fname, memo_tys) =

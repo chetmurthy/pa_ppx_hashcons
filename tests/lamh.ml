@@ -20,8 +20,8 @@ module HT2_memo2_int_term = Hashtbl.Make(struct
     let hash x = x
   end)
 
-let ht1 = HT1_memo2_int_term.create 251
 let memo2_int_term f (x : int) (y : term) =
+let ht1 = HT1_memo2_int_term.create 251 in
   let v1 =
     try
       HT1_memo2_int_term.find ht1 y
