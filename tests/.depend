@@ -1,4 +1,12 @@
 : 
+lamh.cmo.ppo.cmo : \
+    test_hashcons.cmo
+lamh.cmo.ppo.cmx : \
+    test_hashcons.cmx
+lamh.cmo : \
+    test_hashcons.cmo
+lamh.cmx : \
+    test_hashcons.cmx
 test_hashcons.cmo.ppo.cmo :
 test_hashcons.cmo.ppo.cmx :
 test_hashcons.cmo :

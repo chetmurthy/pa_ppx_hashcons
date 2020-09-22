@@ -21,7 +21,8 @@ let prehash_variable x = Hashtbl.hash x ;;
 type bdd = Zero | One | Node of variable * bdd (*low*) * bdd (*high*)
 [@@deriving hashcons { module_name = BDD
                      ; memo = {
-                         memo = [%typ: bdd]
+                         memo_bdd = [%typ: bdd]
+                       ; memo_bdd_bdd = [%typ: bdd * bdd]
                        }
                      }]
 ;;
