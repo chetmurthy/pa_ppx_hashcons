@@ -8,58 +8,6 @@ let ref x = term (Ref x)
 let abs x = term (Abs x)
 let app (x,y) = term (App(x,y))
 
-module HT1_memo2_int_term = Ephemeron.K1.Make(struct
-    type t = term
-    let equal x y = x.tag = y.tag
-    let hash = hash_term
-  end)
-
-module HT2_memo2_int_term = Hashtbl.Make(struct
-    type t = int
-    let equal x y = x = y
-    let hash x = x
-  end)
-
-let memo2_int_term f (x : int) (y : term) =
-let ht1 = HT1_memo2_int_term.create 251 in
-  let v1 =
-    try
-      HT1_memo2_int_term.find ht1 y
-    with Not_found -> begin
-        let v1 = HT2_memo2_int_term.create 23 in
-        HT1_memo2_int_term.add ht1 y v1 ;
-        v1
-      end in
-  let v2 =
-    try
-      HT2_memo2_int_term.find v1 x
-    with Not_found -> begin
-        let v2 = f x y in
-        HT2_memo2_int_term.add v1 x v2 ;
-        v2
-      end in
-  v2
-;;
-
-module HT1_memo2_term_term = Ephemeron.K2.Make(struct
-    type t = term
-    let equal x y = x.tag = y.tag
-    let hash = hash_term
-  end)
-    (struct
-    type t = term
-    let equal x y = x.tag = y.tag
-    let hash = hash_term
-  end)
-
-let ht1 = HT1_memo2_term_term.create 251
-let memo2_term_term f x y =
-  try HT1_memo2_term_term.find ht1 (x,y)
-  with Not_found ->
-    let newval = f x y in
-    HT1_memo2_term_term.add ht1 (x,y) newval;
- newval
-
 let lift n = 
   let rec lift_rec k = 
     let rec lift_k t = match t.node with

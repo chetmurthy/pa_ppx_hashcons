@@ -54,6 +54,7 @@ value build_context loc ctxt tdl =
 ;
 
 
+value canon_expr e = Reloc.expr (fun _ -> Ploc.dummy) 0 e ;
 value canon_ctyp ty = Reloc.ctyp (fun _ -> Ploc.dummy) 0 ty ;
 value builtin_types =
   let loc = Ploc.dummy in
@@ -263,13 +264,13 @@ value generate_memo_ephemeron_bindings loc ctxt rc memo_fname bindings =
     let loc = loc_of_ctyp ty in
     let mname = Printf.sprintf "HT%d_%s" i memo_fname in
     let htname = Printf.sprintf "ht%d_%s" i memo_fname in
-    [<:str_item< value $lid:htname$ = $uid:mname$.create 251 >>
+    [(<:patt< $lid:htname$ >>, <:expr< $uid:mname$.create 251 >>, <:vala< [] >>)
     ]
   | [(_, _, ty1); (j, _, ty2) :: rest] ->
     let loc = loc_of_ctyp ty2 in
     let mname = Printf.sprintf "HT%d_%s" j memo_fname in
     let htname = Printf.sprintf "ht%d_%s" j memo_fname in
-    [<:str_item< value $lid:htname$ = $uid:mname$.create 251 >>
+    [(<:patt< $lid:htname$ >>, <:expr< $uid:mname$.create 251 >>, <:vala< [] >>)
     :: (if rest = [] then [] else genrec [ (-1, "", <:ctyp:< ( $ty1$ * $ty2$ ) >>) :: rest])
    ]
   ] in
@@ -295,34 +296,151 @@ value generate_memo_hash_modules loc ctxt rc memo_fname bindings =
   ]
 ;
 
-value generate_memo_hash_bindings loc ctxt rc memo_fname bindings =
-  if bindings = [] then [] else
-  let types = List.map (fun (_, _, ty) -> ty) bindings in
+value generate_memo_hash_binding loc ctxt rc memo_fname bindings = do {
+  assert (bindings <> []) ;
   let ((i, _, _), _) = sep_last bindings in
   let mname = Printf.sprintf "HT%d_%s" i memo_fname in
   let htname = Printf.sprintf "ht%d_%s" i memo_fname in
-  [<:str_item< value $lid:htname$ = $uid:mname$.create 251 >>
-  ]
+  <:str_item< value $lid:htname$ = $uid:mname$.create 251 >>
+}
 ;
 
-value generate_memo_items loc ctxt rc (memo_fname, memo_tys) =
+value preprocess_memo_arguments loc ctxt rc (memo_fname, memo_tys) =
   let arg_bindings = List.mapi (fun i ty -> (i, Printf.sprintf "v_%d" i, ty)) memo_tys in
   let pred = fun [
     (_, _, <:ctyp< $lid:lid$ >>) when List.mem_assoc lid rc.type_decls -> True
   | (_, _, z) when List.mem (canon_ctyp z) builtin_types -> False
   | (_, _, z) -> Ploc.raise (loc_of_ctyp z)
-      (Failure Fmt.(str "generate_memo_items: types can only be either primitive or hashconsed: %a"
-                      Pp_MLast.pp_ctyp z))
+      (Failure Fmt.(str "generate_memo_items %s: types can only be either primitive or hashconsed: %a"
+                      memo_fname Pp_MLast.pp_ctyp z))
   ] in
   let (hc_bindings, prim_bindings) = filter_split pred arg_bindings in
   if hc_bindings = [] then
-    Ploc.raise loc (Failure "generate_memo_items: no hashconsed types specified")
+    Ploc.raise loc (Failure Fmt.(str "generate_memo_items %s: no hashconsed types specified" memo_fname))
   else
-    let ephemeron_si_modules = generate_memo_ephemeron_modules loc ctxt rc memo_fname hc_bindings in
-    let hash_si_modules = generate_memo_hash_modules loc ctxt rc memo_fname prim_bindings in
-    ephemeron_si_modules @ hash_si_modules
+    (arg_bindings, hc_bindings, prim_bindings)
 ;
 
+value generate_memo_items loc ctxt rc (memo_fname, memo_tys) =
+  let (arg_bindings, hc_bindings, prim_bindings) = 
+    preprocess_memo_arguments loc ctxt rc (memo_fname, memo_tys) in
+  let ephemeron_si_modules = generate_memo_ephemeron_modules loc ctxt rc memo_fname hc_bindings in
+  let hash_si_modules = generate_memo_hash_modules loc ctxt rc memo_fname prim_bindings in
+  ephemeron_si_modules @ hash_si_modules
+;
+
+value generate_memo_function_prim_expression loc ctxt rc memo_fname prim_bindings recompute_expr = do {
+  assert (prim_bindings <> []) ;
+  let vars = List.map (fun (_, v, _) -> v) prim_bindings in
+  let vars_exps = List.map (fun v -> <:expr< $lid:v$ >>) vars in
+  let keyexp = match vars_exps with [
+    [e] -> e
+  | _ -> <:expr< ( $list:vars_exps$ ) >>
+  ] in
+  let ((i, _, _), _) = sep_last prim_bindings in
+  let mname = Printf.sprintf "HT%d_%s" i memo_fname in
+  <:expr< (fun __ht__ ->
+    try $uid:mname$.find __ht__ $keyexp$
+    with [Not_found -> 
+      let __newval__ = $recompute_expr$ in do {
+        $uid:mname$.add __ht__ $keyexp$ __newval__ ;
+        __newval__
+      }
+          ]) >>
+}
+;
+
+value generate_memo_function_prim_constructor loc ctxt rc memo_fname prim_bindings = do {
+  assert (prim_bindings <> []) ;
+  let ((i, _, _), _) = sep_last prim_bindings in
+  let mname = Printf.sprintf "HT%d_%s" i memo_fname in
+  <:expr< $uid:mname$.create 251 >>
+}
+;
+
+value generate_memo_function_body loc ctxt rc (memo_fname, memo_tys) =
+  let (arg_bindings, hc_bindings, prim_bindings) = 
+    preprocess_memo_arguments loc ctxt rc (memo_fname, memo_tys) in
+  let recompute_exp = Expr.applist <:expr< f >> (List.map (fun (_, v, _) -> <:expr< $lid:v$ >>) arg_bindings) in
+
+  let rec genrec = fun [
+    [] -> Ploc.raise loc (Failure Fmt.(str "generate_memo_function_body: must supply some hashconsed types"))
+  | [(i, v, ty)] ->
+    let mname = Printf.sprintf "HT%d_%s" i memo_fname in
+    let htname = Printf.sprintf "ht%d_%s" i memo_fname in
+    if prim_bindings = [] then
+      <:expr<
+      try $uid:mname$.find $lid:htname$ $lid:v$
+      with [ Not_found -> do {
+        let __newval__ = __recompute_expr__ () in
+          $uid:mname$.add $lid:htname$ $lid:v$ __newval__ ;
+          __newval__
+        }]
+      >>
+    else
+      let prim_e =
+        generate_memo_function_prim_expression loc ctxt rc memo_fname prim_bindings <:expr< __recompute_expr__ () >> in
+      let prim_ce = generate_memo_function_prim_constructor loc ctxt rc memo_fname prim_bindings in
+      let v_ht = Printf.sprintf "ht_%s" v in
+      <:expr<
+      let $lid:v_ht$ =
+        try $uid:mname$.find $lid:htname$ $lid:v$
+        with [ Not_found -> do {
+          let $lid:v_ht$ = $prim_ce$ in
+          $uid:mname$.add $lid:htname$ $lid:v$ $lid:v_ht$ ;
+          $lid:v_ht$
+        }] in
+        $prim_e$ $lid:v_ht$
+      >>
+
+  | [(_, v1, ty1) ; (j, v2, ty2)] ->
+    let mname = Printf.sprintf "HT%d_%s" j memo_fname in
+    let htname = Printf.sprintf "ht%d_%s" j memo_fname in
+    if prim_bindings = [] then
+      <:expr<
+      try $uid:mname$.find $lid:htname$ ($lid:v1$, $lid:v2$)
+      with [ Not_found -> do {
+        let __newval__ = __recompute_expr__ () in
+          $uid:mname$.add $lid:htname$ ($lid:v1$, $lid:v2$) __newval__ ;
+          __newval__
+        }]
+      >>
+    else
+      let prim_e =
+        generate_memo_function_prim_expression loc ctxt rc memo_fname prim_bindings <:expr< __recompute_expr__ () >> in
+      let prim_ce = generate_memo_function_prim_constructor loc ctxt rc memo_fname prim_bindings in
+      let v_ht = Printf.sprintf "ht_%s" v2 in
+      <:expr<
+      let $lid:v_ht$ =
+        try $uid:mname$.find $lid:htname$ ($lid:v1$, $lid:v2$)
+        with [ Not_found -> do {
+          let $lid:v_ht$ = $prim_ce$ in
+          $uid:mname$.add $lid:htname$ ($lid:v1$, $lid:v2$) $lid:v_ht$ ;
+          $lid:v_ht$
+        }] in
+        $prim_e$ $lid:v_ht$
+      >>
+  ] in
+  let hc_exp = genrec hc_bindings in
+  <:expr<
+    let __recompute_expr__ = fun () -> $recompute_exp$ in
+    $hc_exp$
+  >>
+;
+
+value generate_memo_function_binding loc ctxt rc (memo_fname, memo_tys) =
+  let (arg_bindings, hc_bindings, prim_bindings) = 
+    preprocess_memo_arguments loc ctxt rc (memo_fname, memo_tys) in
+  let body =
+    List.fold_right (fun (_, v, ty) rhs -> <:expr< fun ($lid:v$ : $ty$) -> $rhs$ >>)
+      arg_bindings (generate_memo_function_body loc ctxt rc (memo_fname, memo_tys)) in
+  let e = <:expr< fun f ->
+    let $list:generate_memo_ephemeron_bindings loc ctxt rc memo_fname hc_bindings$ in
+    $body$
+    >> in
+  let e = canon_expr e in
+  (<:patt< $lid:memo_fname$ >>, e, <:vala< [] >>)
+;
 
 value hashcons_module_name (name, td) =
   match List.find_map (fun a ->
@@ -410,6 +528,7 @@ value str_item_gen_hashcons name arg = fun [
     let hash_bindings = List.concat (List.map (HC.generate_hash_bindings arg rc) rc.HC.type_decls) in
     let hashcons_constructors = List.map (HC.generate_hashcons_constructor arg rc) rc.HC.type_decls in
     let memo_items = List.concat (List.map (HC.generate_memo_items loc arg rc) rc.HC.memo) in
+    let memo_function_bindings = List.map (HC.generate_memo_function_binding loc arg rc) rc.HC.memo in
     <:str_item< module $uid:rc.module_name$ = struct
                 open Hashcons ;
                 type $list:new_tdl$ ;
@@ -418,6 +537,7 @@ value str_item_gen_hashcons name arg = fun [
                 declare $list:hashcons_modules @ hashcons_constructors$ end ;
                 value $list:hash_bindings$ ;
                 declare $list:memo_items$ end ;
+                value $list:memo_function_bindings$ ;
                 end >>
 | _ -> assert False ]
 ;
