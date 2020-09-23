@@ -1,7 +1,20 @@
 
 (* programme de test de réductions massives de lambda-termes *)
 (* version AVEC hash-consing *)
-open Test_hashcons.LAM
+
+type term =
+    Ref of int
+  | Abs of term
+  | App of term * term[@@hashcons_module Term][@@hashcons_constructor term]
+[@@deriving hashcons { module_name = LAM
+                     ; memo = {
+                         memo = [%typ: term]
+                       ; memo2_int_term = [%typ: int * term]
+                       ; memo2_term_term = [%typ: term * term]
+                       }
+                     }]
+
+open LAM
 open Hashcons
 
 let ref x = term (Ref x)
@@ -46,7 +59,7 @@ let rec hnf t = match t.node with
       | {node=Abs w} -> hnf (subst u w)
       | h     -> app (h, u)
 
-let nhf = memo hnf
+(*let nhf = memo hnf*)
 
 let rec nf t = match t.node with
   | Ref n -> t
@@ -55,7 +68,7 @@ let rec nf t = match t.node with
       | {node=Abs w}  -> nf (subst u w)
       | h      -> app (nf h, nf u)
 
-let nf = memo nf
+(*let nf = memo nf*)
 
 type expr = Ref2 of int | Abs2 of expr | App2 of expr * expr
 let rec term_of_expr = function
