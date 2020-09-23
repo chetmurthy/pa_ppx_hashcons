@@ -520,7 +520,10 @@ value str_item_gen_hashcons name arg = fun [
     let new_tdl =
       let tdl = List.concat ll in
       tdl @ [
-        <:type_decl< hash_consed +'a = Hashcons.hash_consed 'a >> 
+        <:type_decl< hash_consed +'a = Hashcons.hash_consed 'a == private {
+                     hkey : int;
+                     tag : int;
+                     node : 'a } >> 
       ] in
     let pre_eq_bindings = List.map (HC.generate_pre_eq_binding arg rc) rc.HC.type_decls in
     let pre_hash_bindings = List.map (HC.generate_pre_hash_binding arg rc) rc.HC.type_decls in
