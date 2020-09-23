@@ -19,41 +19,6 @@ open Pa_ppx_utils ;
 
 value debug = Pa_passthru.debug ;
 
-module HC = struct
-type t = {
-  module_name : string
-; type_decls : list (string * MLast.type_decl)
-; memo : list (string * list MLast.ctyp)
-}
-;
-value build_context loc ctxt tdl =
-  let type_decls = List.map (fun (MLast.{tdNam=tdNam} as td) ->
-      (tdNam |> uv |> snd |> uv, td)
-    ) tdl in
-  let open Ctxt in
-  let module_name = match option ctxt "module_name" with [
-    <:expr< $uid:mname$ >> -> mname
-  | _ -> Ploc.raise loc (Failure "pa_deriving_hashcons: option module_name must be a UIDENT")
-  | exception Failure _ ->
-  Ploc.raise loc (Failure "pa_deriving_hashcons: option module_name must be specified")
-  ] in
-  let memo = match option ctxt "memo" with [
-    <:expr< { $list:lel$ } >> ->
-    List.map (fun [
-        (<:patt< $lid:memo_fname$ >>, <:expr< [%typ: ( $list:l$ )] >>) -> (memo_fname, l)
-      | (<:patt< $lid:memo_fname$ >>, <:expr< [%typ: $type:t$] >>) -> (memo_fname, [t])
-      | _ -> Ploc.raise loc (Failure "pa_deriving_hashcons: bad memo record-members")
-      ]) lel
-  | _ -> Ploc.raise loc (Failure "pa_deriving_hashcons: option memo requires a record argument")
-  ] in
-  {
-    module_name = module_name
-  ; type_decls = type_decls
-  ; memo = memo
-  }
-;
-
-
 value canon_expr e = Reloc.expr (fun _ -> Ploc.dummy) 0 e ;
 value canon_ctyp ty = Reloc.ctyp (fun _ -> Ploc.dummy) 0 ty ;
 value builtin_types =
@@ -68,6 +33,70 @@ value builtin_types =
   ; <:ctyp< bool >>
   ; <:ctyp< char >>
   ]
+;
+
+module HC = struct
+type t = {
+  module_name : string
+; type_decls : list (string * MLast.type_decl)
+; memo : list (string * choice (list (bool * MLast.ctyp)) (list (bool * MLast.ctyp)))
+}
+;
+
+value extract_memo_type_list type_decls t =
+  let rec rec_memo_type = fun [
+    <:ctyp< $lid:lid$ >> when List.mem_assoc lid type_decls -> True
+  | <:ctyp< ( $list:l$ ) >> -> List.for_all rec_memo_type l
+  | _ -> False
+  ] in
+  let rec prim_type = fun [
+    z when List.mem (canon_ctyp z) builtin_types -> True
+  | <:ctyp< ( $list:l$ ) >> when List.for_all prim_type l -> True
+  | _ -> False
+  ] in
+  let memoizable t = rec_memo_type t || prim_type t in
+  match t with [
+    z when prim_type z -> Left [(False, z)]
+  | <:ctyp< $lid:_$ >> as z when rec_memo_type z -> Left [(True, z)]
+  | <:ctyp< ( $t1$ * $t2$ ) >> when rec_memo_type t1 && rec_memo_type t2 -> Left [(True, t1);(True, t2)]
+  | <:ctyp< ( $t1$ * $t2$ ) >> when rec_memo_type t1 && prim_type t2 -> Left [(True, t1);(False, t2)]
+  | <:ctyp< ( $t1$ * $t2$ * $t3$ ) >> when rec_memo_type t1 &&  rec_memo_type t2 && prim_type t2 ->
+    Left [(True, t1);(True, t2);(False, t3)]
+
+  | <:ctyp< ( $list:l$ ) >> when List.for_all memoizable l ->
+    Right (List.map (fun z -> (rec_memo_type z, z)) l)
+
+  | _ -> Ploc.raise (loc_of_ctyp t)
+           (Failure Fmt.(str "extract_memo_type_list: not memoizable type:@ %a"
+                           Pp_MLast.pp_ctyp t))
+  ]
+;
+
+value build_context loc ctxt tdl =
+  let type_decls = List.map (fun (MLast.{tdNam=tdNam} as td) ->
+      (tdNam |> uv |> snd |> uv, td)
+    ) tdl in
+  let open Ctxt in
+  let module_name = match option ctxt "module_name" with [
+    <:expr< $uid:mname$ >> -> mname
+  | _ -> Ploc.raise loc (Failure "pa_deriving_hashcons: option module_name must be a UIDENT")
+  | exception Failure _ ->
+  Ploc.raise loc (Failure "pa_deriving_hashcons: option module_name must be specified")
+  ] in
+  let memo = match option ctxt "memo" with [
+    <:expr< { $list:lel$ } >> ->
+    List.map (fun [
+        (<:patt< $lid:memo_fname$ >>, <:expr< [%typ: $type:t$] >>) -> 
+        (memo_fname, extract_memo_type_list type_decls t)
+      | _ -> Ploc.raise loc (Failure "pa_deriving_hashcons: bad memo record-members")
+      ]) lel
+  | _ -> Ploc.raise loc (Failure "pa_deriving_hashcons: option memo requires a record argument")
+  ] in
+  {
+    module_name = module_name
+  ; type_decls = type_decls
+  ; memo = memo
+  }
 ;
 
 value generate_eq_expression loc ctxt rc ty =
@@ -224,6 +253,165 @@ value generate_hash_bindings ctxt rc (name, td) =
   ; (<:patt< $lid:hc_fname$ >>, hc_rhs, <:vala< [] >>)]
 ;
 
+value generate_memo_item loc ctxt rc (memo_fname, memo_tys) =
+  match memo_tys with [
+    Left [(False, z)] ->
+    let mname = Printf.sprintf "HT%d_%s" 0 memo_fname in
+    <:str_item<
+      declare
+        module $mname$ = Hashtbl.Make(struct
+          type t = $z$ ;
+          value equal = $generate_eq_expression loc ctxt rc z$ ;
+          value hash = $generate_hash_expression loc ctxt rc z$ ;
+        end) ;
+      value $lid:memo_fname$ f =
+        let ht = $uid:mname$.create 251 in
+        fun ( x : $z$ ) ->
+          try $uid:mname$.find ht x
+          with [ Not_found -> do {
+            let y = f x in 
+            $uid:mname$.add ht x y ;
+            y
+          }]
+        ;
+      end
+     >>
+
+  | Left [(True, z)] ->
+    let mname = Printf.sprintf "HT%d_%s" 0 memo_fname in
+    <:str_item<
+      declare
+        module $mname$ = Ephemeron.K1.Make(struct
+          type t = $z$ ;
+          value equal = $generate_eq_expression loc ctxt rc z$ ;
+          value hash = $generate_hash_expression loc ctxt rc z$ ;
+        end) ;
+      value $lid:memo_fname$ f =
+        let ht = $uid:mname$.create 251 in
+        fun ( x : $z$ ) ->
+          try $uid:mname$.find ht x
+          with [ Not_found -> do {
+            let y = f x in 
+            $uid:mname$.add ht x y ;
+            y
+          }]
+        ;
+      end
+     >>
+
+  | Left [(True, z0); (True, z1)] ->
+    let mname = Printf.sprintf "HT%d_%s" 0 memo_fname in
+    <:str_item<
+      declare
+        module $mname$ = Ephemeron.K2.Make
+          (struct
+            type t = $z0$ ;
+            value equal = $generate_eq_expression loc ctxt rc z0$ ;
+            value hash = $generate_hash_expression loc ctxt rc z0$ ;
+           end)
+          (struct
+            type t = $z1$ ;
+            value equal = $generate_eq_expression loc ctxt rc z1$ ;
+            value hash = $generate_hash_expression loc ctxt rc z1$ ;
+           end) ;
+      value $lid:memo_fname$ f =
+        let ht = $uid:mname$.create 251 in
+        fun ( x : $z0$ ) ( y : $z1$ ) ->
+          try $uid:mname$.find ht (x,y)
+          with [ Not_found -> do {
+            let y = f x y in 
+            $uid:mname$.add ht (x,y) y ;
+            y
+          }]
+        ;
+      end
+     >>
+
+  | Left [(True, z0); (False, z1)] ->
+    let mname0 = Printf.sprintf "HT%d_%s" 0 memo_fname in
+    let mname1 = Printf.sprintf "HT%d_%s" 1 memo_fname in
+    <:str_item<
+      declare
+        module $mname0$ = Ephemeron.K1.Make
+          (struct
+            type t = $z0$ ;
+            value equal = $generate_eq_expression loc ctxt rc z0$ ;
+            value hash = $generate_hash_expression loc ctxt rc z0$ ;
+           end) ;
+        module $mname1$ = Hashtbl.Make
+          (struct
+            type t = $z1$ ;
+            value equal = $generate_eq_expression loc ctxt rc z1$ ;
+            value hash = $generate_hash_expression loc ctxt rc z1$ ;
+           end) ;
+        
+      value $lid:memo_fname$ f =
+        let ht = $uid:mname0$.create 251 in
+        fun ( x : $z0$ ) ( y : $z1$ ) ->
+          let primht = try $uid:mname0$.find ht x
+            with [ Not_found -> do {
+              let primht = $uid:mname1$.create 251 in 
+              $uid:mname0$.add ht x primht ;
+              primht
+            }] in
+          try $uid:mname1$.find primht y
+          with [ Not_found -> do {
+            let newv = f x y in
+            $uid:mname1$.add primht y newv ;
+            newv
+          }]
+        ;
+      end
+     >>
+
+  | Left [(True, z0); (True, z1); (False, z2)] ->
+    let mname0 = Printf.sprintf "HT%d_%s" 0 memo_fname in
+    let mname1 = Printf.sprintf "HT%d_%s" 1 memo_fname in
+    <:str_item<
+      declare
+        module $mname0$ = Ephemeron.K2.Make
+          (struct
+            type t = $z0$ ;
+            value equal = $generate_eq_expression loc ctxt rc z0$ ;
+            value hash = $generate_hash_expression loc ctxt rc z0$ ;
+           end)
+          (struct
+            type t = $z1$ ;
+            value equal = $generate_eq_expression loc ctxt rc z1$ ;
+            value hash = $generate_hash_expression loc ctxt rc z1$ ;
+           end) ;
+        module $mname1$ = Hashtbl.Make
+          (struct
+            type t = $z2$ ;
+            value equal = $generate_eq_expression loc ctxt rc z2$ ;
+            value hash = $generate_hash_expression loc ctxt rc z2$ ;
+           end) ;
+        
+      value $lid:memo_fname$ f =
+        let ht = $uid:mname0$.create 251 in
+        fun ( x : $z0$ ) ( y : $z1$ ) ( z : $z2$ ) ->
+          let primht = try $uid:mname0$.find ht (x, y)
+            with [ Not_found -> do {
+              let primht = $uid:mname1$.create 251 in 
+              $uid:mname0$.add ht (x, y) primht ;
+              primht
+            }] in
+          try $uid:mname1$.find primht z
+          with [ Not_found -> do {
+            let newv = f x y z in
+            $uid:mname1$.add primht z newv ;
+            newv
+          }]
+        ;
+      end
+     >>
+
+  | Right l -> <:str_item< declare end >>
+
+  ]
+;
+
+(*
 value generate_memo_ephemeron_modules loc ctxt rc memo_fname bindings =
   let rec genrec = fun [
     [(i, _, ty)] ->
@@ -441,6 +629,7 @@ value generate_memo_function_binding loc ctxt rc (memo_fname, memo_tys) =
   let e = canon_expr e in
   (<:patt< $lid:memo_fname$ >>, e, <:vala< [] >>)
 ;
+*)
 
 value hashcons_module_name (name, td) =
   match List.find_map (fun a ->
@@ -530,8 +719,8 @@ value str_item_gen_hashcons name arg = fun [
     let hashcons_modules = List.map (HC.generate_hashcons_module arg rc) rc.HC.type_decls in
     let hash_bindings = List.concat (List.map (HC.generate_hash_bindings arg rc) rc.HC.type_decls) in
     let hashcons_constructors = List.map (HC.generate_hashcons_constructor arg rc) rc.HC.type_decls in
-    let memo_items = List.concat (List.map (HC.generate_memo_items loc arg rc) rc.HC.memo) in
-    let memo_function_bindings = List.map (HC.generate_memo_function_binding loc arg rc) rc.HC.memo in
+    let memo_items = List.map (HC.generate_memo_item loc arg rc) rc.HC.memo in
+    let memo_items = List.map (Reloc.str_item (fun _ -> Ploc.dummy) 0) memo_items in
     <:str_item< module $uid:rc.module_name$ = struct
                 open Hashcons ;
                 type $list:new_tdl$ ;
@@ -540,8 +729,7 @@ value str_item_gen_hashcons name arg = fun [
                 declare $list:hashcons_modules @ hashcons_constructors$ end ;
                 value $list:hash_bindings$ ;
                 declare $list:memo_items$ end ;
-                value $list:memo_function_bindings$ ;
-                end >>
+                  end >>
 | _ -> assert False ]
 ;
 
