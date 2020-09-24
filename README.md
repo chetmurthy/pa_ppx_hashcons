@@ -127,10 +127,18 @@ galore.
 
    c. memoize the function `fun x y -> (x,y) : ((term * term) * term) -> term -> ((term * term) * term) * term`
 
+   Note that these steps are just to convert 4 arguments into a single
+   argument, in such a way that all the pieces are stored in Ephenerom
+   hashtables.  There is an N-ary ephenerom hashtable (and we could
+   have used it, since all the types are identical) but we wanted to
+   able to handle the case where all the arguments are of different
+   types.
+
    d. memoize the function `fun _ -> Hashtbl.create 251 : ((term * term) * term) * term -> (int * int, rty) Hashtbl.t`
 
-   It should be clear how to put all these pieces together: given `w,x,y,z : term, i, j : int`,
+   It should be clear how to put all these pieces together:
 
+   - given `w,x,y,z : term, i, j : int`,
    - apply step (a) to `w, x` yielding `p`
    - then step (b) to `p, y` yielding `q`
    - then step (c) to `q, z` yielding `r`
