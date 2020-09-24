@@ -116,7 +116,7 @@ galore.
    ```
    
    So the memoizer is first applied to a hashtable, and then the function, and then its arguments.
-   THe memoizer `memo_int_int_int_int` shows this.
+   The memoizer `memo_int_int_int_int` shows this.
 
 5. A function `f : hct_1 -> ... -> hct_n -> pt_1 -> ... -> pt_m -> rty` can be treated in the
    following manner.  By example we'll treat `term -> term -> term -> term -> int -> int -> rty`.
@@ -130,8 +130,11 @@ galore.
    d. memoize the function `fun _ -> Hashtbl.create 251 : ((term * term) * term) * term -> (int * int, rty) Hashtbl.t`
 
    It should be clear how to put all these pieces together: given `w,x,y,z : term, i, j : int`,
-   apply step (a) to `w, x` yielding `p`, then step (b) tp `p, y` yielding `q`,
-   then step (c) to `q, z` yielding `r`, then step (d) to `r`, yielding the hashtable `s`
-   finally, we can apply step #4 above to the hashtable `s` and `(i,j)` and the original
+
+   - apply step (a) to `w, x` yielding `p`
+   - then step (b) to `p, y` yielding `q`
+   - then step (c) to `q, z` yielding `r`
+   - then step (d) to `r`, yielding the hashtable `s`
+   - finally, we can apply step #4 above to the hashtable `s` and `(i,j)` and the original
    function invocation `f w x y z`, to complete the memoization.  Again, the generated code
    in the previously mentioned testcase shows this sequence in straightforward detail.
