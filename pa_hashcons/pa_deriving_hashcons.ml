@@ -266,6 +266,14 @@ value expr_make_tuple loc l =
   ]
 ;
 
+value patt_make_tuple loc l =
+  match l with [
+    [] -> Ploc.raise loc (Failure "patt_make_tuple: invalid empty-list arg")
+  | [t] -> t
+  | l -> <:patt< ( $list:l$ ) >>
+  ]
+;
+
 value find_matching_memo loc rc l =
   let eq_lists l1 l2 =
     List.length l1 = List.length l2 &&
@@ -273,7 +281,7 @@ value find_matching_memo loc rc l =
         b1=b2 && Reloc.eq_ctyp t1 t2) l1 l2 in
   match List.find_map (fun (memo, t) ->
     match t with [
-      Right _ -> None
+      Right l' when eq_lists l l' -> Some memo
     | Left l' when eq_lists l l' -> Some memo
     | _ -> None
     ]) rc.memo with [
@@ -379,7 +387,8 @@ value generate_memo_item loc ctxt rc (memo_fname, memo_tys) =
       assert (hc_args <> []) ;
       if prim_args <> [] then
         let hc_memo_name = find_matching_memo loc rc (List.map snd hc_args) in
-        let prim_memo_name = find_matching_memo loc rc (List.map snd prim_args) in
+        let prim_tupletype = ctyp_make_tuple loc (List.map to_ctyp prim_args) in
+        let prim_memo_name = find_matching_memo loc rc [(False, prim_tupletype)] in
         let hc_mname = "HT_"^hc_memo_name in
         let prim_mname = "HT_"^prim_memo_name in
 
@@ -392,11 +401,11 @@ value generate_memo_item loc ctxt rc (memo_fname, memo_tys) =
 
         let f_call = Expr.applist <:expr< f >> (List.map (to_expr loc) vars_types) in
         let prim_function_expr =
-          Expr.abstract_over (List.map (to_typatt loc) prim_args) f_call in
+          Expr.abstract_over [(patt_make_tuple loc (List.map (to_typatt loc) prim_args))] f_call in
         
         let prim_memo_call =
           Expr.applist <:expr< $lid:prim_memo_name$ >>
-            [prim_function_expr; <:expr< ht >> :: List.map (to_expr loc) prim_args] in
+            [prim_function_expr; <:expr< ht >> ; expr_make_tuple loc (List.map (to_expr loc) prim_args)] in
                                
         let hc_call = Expr.applist <:expr< hc_f >> (List.map (to_expr loc) hc_args) in
 
