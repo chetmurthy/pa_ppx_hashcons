@@ -59,9 +59,6 @@ value extract_memo_type_list type_decls t =
     z when prim_type z -> Left [(False, z)]
   | <:ctyp< $lid:_$ >> as z when rec_memo_type z -> Left [(True, z)]
   | <:ctyp< ( $t1$ * $t2$ ) >> when rec_memo_type t1 && rec_memo_type t2 -> Left [(True, t1);(True, t2)]
-  | <:ctyp< ( $t1$ * $t2$ ) >> when rec_memo_type t1 && prim_type t2 -> Left [(True, t1);(False, t2)]
-  | <:ctyp< ( $t1$ * $t2$ * $t3$ ) >> when rec_memo_type t1 &&  rec_memo_type t2 && prim_type t2 ->
-    Left [(True, t1);(True, t2);(False, t3)]
 
   | <:ctyp< ( $list:l$ ) >> when List.for_all memoizable l ->
     Right (List.map (fun z -> (rec_memo_type z, z)) l)
@@ -253,10 +250,57 @@ value generate_hash_bindings ctxt rc (name, td) =
   ; (<:patt< $lid:hc_fname$ >>, hc_rhs, <:vala< [] >>)]
 ;
 
+value ctyp_make_tuple loc l =
+  match l with [
+    [] -> Ploc.raise loc (Failure "ctyp_make_tuple: invalid empty-list arg")
+  | [t] -> t
+  | l -> <:ctyp< ( $list:l$ ) >>
+  ]
+;
+
+value expr_make_tuple loc l =
+  match l with [
+    [] -> Ploc.raise loc (Failure "expr_make_tuple: invalid empty-list arg")
+  | [t] -> t
+  | l -> <:expr< ( $list:l$ ) >>
+  ]
+;
+
+value find_matching_memo loc rc l =
+  match List.find_map (fun (memo, t) ->
+    match t with [
+      Right _ -> None
+    | Left l' when l = l' -> Some memo
+    ]) rc.memo with [
+    Some n -> n
+  | None ->
+    let pp_ctyp = Pp_MLast.pp_ctyp in
+    Ploc.raise loc (Failure Fmt.(str "find_matching_memo: no match:@ %s"
+                                   ([%show: list (bool * ctyp)] l)))
+  ]
+;
+
 value generate_memo_item loc ctxt rc (memo_fname, memo_tys) =
   match memo_tys with [
-    Left [(False, z)] ->
+
+    Left l when not (List.exists fst l) ->
+    let vars_types = List.mapi (fun i x -> (Printf.sprintf "v_%d" i, x)) l in
+    let vars = List.map fst vars_types in
+    let vars_exps = List.map (fun v -> <:expr< $lid:v$ >>) vars in
+    let z = ctyp_make_tuple loc (List.map snd l) in
+    let vars_tuple = expr_make_tuple loc vars_exps in
     let mname = Printf.sprintf "HT%d_%s" 0 memo_fname in
+    let recompute_expr = Expr.applist <:expr< f >> vars_exps in
+    let body = <:expr<
+          try $uid:mname$.find ht $vars_tuple$
+          with [ Not_found -> do {
+            let newv = $recompute_expr$ in 
+            $uid:mname$.add ht $vars_tuple$ newv ;
+            newv
+          }]
+      >> in
+    let fun_body =
+      List.fold_right (fun (v, (_, ty)) rhs -> <:expr< fun ( $lid:v$ : $ty$ ) -> $rhs$ >>) vars_types body in
     <:str_item<
       declare
         module $mname$ = Hashtbl.Make(struct
@@ -264,15 +308,8 @@ value generate_memo_item loc ctxt rc (memo_fname, memo_tys) =
           value equal = $generate_eq_expression loc ctxt rc z$ ;
           value hash = $generate_hash_expression loc ctxt rc z$ ;
         end) ;
-      value $lid:memo_fname$ f =
-        let ht = $uid:mname$.create 251 in
-        fun ( x : $z$ ) ->
-          try $uid:mname$.find ht x
-          with [ Not_found -> do {
-            let y = f x in 
-            $uid:mname$.add ht x y ;
-            y
-          }]
+      value $lid:memo_fname$ f ht =
+        $fun_body$
         ;
       end
      >>
@@ -327,87 +364,15 @@ value generate_memo_item loc ctxt rc (memo_fname, memo_tys) =
       end
      >>
 
-  | Left [(True, z0); (False, z1)] ->
-    let mname0 = Printf.sprintf "HT%d_%s" 0 memo_fname in
-    let mname1 = Printf.sprintf "HT%d_%s" 1 memo_fname in
-    <:str_item<
-      declare
-        module $mname0$ = Ephemeron.K1.Make
-          (struct
-            type t = $z0$ ;
-            value equal = $generate_eq_expression loc ctxt rc z0$ ;
-            value hash = $generate_hash_expression loc ctxt rc z0$ ;
-           end) ;
-        module $mname1$ = Hashtbl.Make
-          (struct
-            type t = $z1$ ;
-            value equal = $generate_eq_expression loc ctxt rc z1$ ;
-            value hash = $generate_hash_expression loc ctxt rc z1$ ;
-           end) ;
-        
-      value $lid:memo_fname$ f =
-        let ht = $uid:mname0$.create 251 in
-        fun ( x : $z0$ ) ( y : $z1$ ) ->
-          let primht = try $uid:mname0$.find ht x
-            with [ Not_found -> do {
-              let primht = $uid:mname1$.create 251 in 
-              $uid:mname0$.add ht x primht ;
-              primht
-            }] in
-          try $uid:mname1$.find primht y
-          with [ Not_found -> do {
-            let newv = f x y in
-            $uid:mname1$.add primht y newv ;
-            newv
-          }]
-        ;
-      end
-     >>
-
-  | Left [(True, z0); (True, z1); (False, z2)] ->
-    let mname0 = Printf.sprintf "HT%d_%s" 0 memo_fname in
-    let mname1 = Printf.sprintf "HT%d_%s" 1 memo_fname in
-    <:str_item<
-      declare
-        module $mname0$ = Ephemeron.K2.Make
-          (struct
-            type t = $z0$ ;
-            value equal = $generate_eq_expression loc ctxt rc z0$ ;
-            value hash = $generate_hash_expression loc ctxt rc z0$ ;
-           end)
-          (struct
-            type t = $z1$ ;
-            value equal = $generate_eq_expression loc ctxt rc z1$ ;
-            value hash = $generate_hash_expression loc ctxt rc z1$ ;
-           end) ;
-        module $mname1$ = Hashtbl.Make
-          (struct
-            type t = $z2$ ;
-            value equal = $generate_eq_expression loc ctxt rc z2$ ;
-            value hash = $generate_hash_expression loc ctxt rc z2$ ;
-           end) ;
-        
-      value $lid:memo_fname$ f =
-        let ht = $uid:mname0$.create 251 in
-        fun ( x : $z0$ ) ( y : $z1$ ) ( z : $z2$ ) ->
-          let primht = try $uid:mname0$.find ht (x, y)
-            with [ Not_found -> do {
-              let primht = $uid:mname1$.create 251 in 
-              $uid:mname0$.add ht (x, y) primht ;
-              primht
-            }] in
-          try $uid:mname1$.find primht z
-          with [ Not_found -> do {
-            let newv = f x y z in
-            $uid:mname1$.add primht z newv ;
-            newv
-          }]
-        ;
-      end
-     >>
-
   | Right l -> <:str_item< declare end >>
-
+(*
+    let vars_types = List.mapi (fun i x -> (Printf.sprintf "v_%d" i, x)) l in
+    let (hc_args, prim_args) = List.filter_split (fun (_, (x, _)) -> x) vars_types in
+    match (hc_args, prim_args) with [
+      ([], l) ->
+      
+    ]
+*)
   ]
 ;
 

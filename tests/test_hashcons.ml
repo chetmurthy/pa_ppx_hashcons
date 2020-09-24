@@ -7,10 +7,12 @@ type term =
   | App of term * term[@@hashcons_module Term][@@hashcons_constructor term]
 [@@deriving hashcons { module_name = LAM
                      ; memo = {
-                         memo = [%typ: term]
-                       ; memo2_term_int = [%typ: term * int]
-                       ; memo2_int_term = [%typ: int * term]
-                       ; memo2_term_term = [%typ: term * term]
+                         memo_term = [%typ: term]
+                       ; memo_int = [%typ: int]
+                       ; memo_int_int_int_int = [%typ: int * int * int * int]
+                       ; memo_term_int = [%typ: term * int]
+                       ; memo_int_term = [%typ: int * term]
+                       ; memo_term_term = [%typ: term * term]
                        }
                      }]
 ;;
