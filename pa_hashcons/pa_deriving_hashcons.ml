@@ -268,6 +268,7 @@ value expr_make_tuple loc l =
 
 value find_matching_memo loc rc l =
   let eq_lists l1 l2 =
+    List.length l1 = List.length l2 &&
     List.for_all2 (fun (b1, t1) (b2, t2) ->
         b1=b2 && Reloc.eq_ctyp t1 t2) l1 l2 in
   match List.find_map (fun (memo, t) ->
@@ -409,7 +410,35 @@ value generate_memo_item loc ctxt rc (memo_fname, memo_tys) =
             let hc_f = $lid:hc_memo_name$ $hc_function_expr$ in
             $fun_body$
         >>
-      else <:str_item< declare end >>
+      else match hc_args with [
+        []|[_]|[_;_] -> assert False
+        | [arg1; arg2 :: rest] ->
+        let first_memo_name = find_matching_memo loc rc (List.map snd [arg1;arg2]) in
+        let pairty = <:ctyp< ( $list:[to_ctyp arg1;to_ctyp arg2]$ ) >> in
+        let second_memo_name = find_matching_memo loc rc [(True, pairty) :: List.map snd rest] in
+        let first_mname = "HT_"^first_memo_name in
+        let second_mname = "HT_"^second_memo_name in
+
+        let second_f_call =
+          Expr.applist <:expr< second_f p >> (List.map (to_expr loc) rest) in
+        let body = <:expr<
+                     let p = first_f $to_expr loc arg1$ $to_expr loc arg2$ in
+                     $second_f_call$ >> in
+        let fun_body =
+          Expr.abstract_over (List.map (to_typatt loc) hc_args) body in
+        
+        let f_call = Expr.applist <:expr< f >> (List.map (to_expr loc) hc_args) in
+        let second_f_function =
+          Expr.abstract_over [<:patt< ($to_patt loc arg1$, $to_patt loc arg2$) >> :: List.map (to_patt loc) rest]
+            f_call in
+        <:str_item<
+          value $lid:memo_fname$ f =
+            let first_f = $lid:first_memo_name$ (fun a1 a2 -> (a1, a2)) in
+            let second_f = $lid:second_memo_name$
+              $second_f_function$ in
+            $fun_body$
+          >>
+      ]
     }
 
   ]

@@ -13,6 +13,8 @@ type term =
                        ; memo_term_int = [%typ: term * int]
                        ; memo_int_term = [%typ: int * term]
                        ; memo_term_term = [%typ: term * term]
+                       ; memo_term2_term = [%typ: (term * term) * term]
+                       ; memo_term_term_term = [%typ: term * term * term]
                        }
                      }]
 ;;
