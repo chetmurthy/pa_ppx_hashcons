@@ -9,6 +9,7 @@ type term =
 [@@deriving hashcons { module_name = LAM
                      ; memo = {
                          memo = [%typ: term]
+                       ; memo_int = [%typ: int]
                        ; memo2_int_term = [%typ: int * term]
                        ; memo2_term_term = [%typ: term * term]
                        }

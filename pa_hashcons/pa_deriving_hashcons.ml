@@ -267,10 +267,14 @@ value expr_make_tuple loc l =
 ;
 
 value find_matching_memo loc rc l =
+  let eq_lists l1 l2 =
+    List.for_all2 (fun (b1, t1) (b2, t2) ->
+        b1=b2 && Reloc.eq_ctyp t1 t2) l1 l2 in
   match List.find_map (fun (memo, t) ->
     match t with [
       Right _ -> None
-    | Left l' when l = l' -> Some memo
+    | Left l' when eq_lists l l' -> Some memo
+    | _ -> None
     ]) rc.memo with [
     Some n -> n
   | None ->
@@ -280,16 +284,21 @@ value find_matching_memo loc rc l =
   ]
 ;
 
+value to_expr loc (v, (_, _)) = <:expr< $lid:v$ >> ;
+value to_patt loc (v, (_, _)) = <:patt< $lid:v$ >> ;
+value to_typatt loc (v, (_, ty)) = <:patt< ( $lid:v$ : $ty$ ) >> ;
+value to_ctyp (_, (_, ty)) = ty ;
+
 value generate_memo_item loc ctxt rc (memo_fname, memo_tys) =
   match memo_tys with [
 
     Left l when not (List.exists fst l) ->
     let vars_types = List.mapi (fun i x -> (Printf.sprintf "v_%d" i, x)) l in
-    let vars = List.map fst vars_types in
-    let vars_exps = List.map (fun v -> <:expr< $lid:v$ >>) vars in
-    let z = ctyp_make_tuple loc (List.map snd l) in
+    let vars_exps = List.map (to_expr loc) vars_types in
+    let vars_patts = List.map (to_patt loc) vars_types in
+    let z = ctyp_make_tuple loc (List.map to_ctyp vars_types) in
     let vars_tuple = expr_make_tuple loc vars_exps in
-    let mname = Printf.sprintf "HT%d_%s" 0 memo_fname in
+    let mname = Printf.sprintf "HT_%s" memo_fname in
     let recompute_expr = Expr.applist <:expr< f >> vars_exps in
     let body = <:expr<
           try $uid:mname$.find ht $vars_tuple$
@@ -299,8 +308,7 @@ value generate_memo_item loc ctxt rc (memo_fname, memo_tys) =
             newv
           }]
       >> in
-    let fun_body =
-      List.fold_right (fun (v, (_, ty)) rhs -> <:expr< fun ( $lid:v$ : $ty$ ) -> $rhs$ >>) vars_types body in
+    let fun_body = Expr.abstract_over vars_patts body in
     <:str_item<
       declare
         module $mname$ = Hashtbl.Make(struct
@@ -315,7 +323,7 @@ value generate_memo_item loc ctxt rc (memo_fname, memo_tys) =
      >>
 
   | Left [(True, z)] ->
-    let mname = Printf.sprintf "HT%d_%s" 0 memo_fname in
+    let mname = Printf.sprintf "HT_%s" memo_fname in
     <:str_item<
       declare
         module $mname$ = Ephemeron.K1.Make(struct
@@ -328,16 +336,16 @@ value generate_memo_item loc ctxt rc (memo_fname, memo_tys) =
         fun ( x : $z$ ) ->
           try $uid:mname$.find ht x
           with [ Not_found -> do {
-            let y = f x in 
-            $uid:mname$.add ht x y ;
-            y
+            let newv = f x in 
+            $uid:mname$.add ht x newv ;
+            newv
           }]
         ;
       end
      >>
 
   | Left [(True, z0); (True, z1)] ->
-    let mname = Printf.sprintf "HT%d_%s" 0 memo_fname in
+    let mname = Printf.sprintf "HT_%s" memo_fname in
     <:str_item<
       declare
         module $mname$ = Ephemeron.K2.Make
@@ -356,23 +364,54 @@ value generate_memo_item loc ctxt rc (memo_fname, memo_tys) =
         fun ( x : $z0$ ) ( y : $z1$ ) ->
           try $uid:mname$.find ht (x,y)
           with [ Not_found -> do {
-            let y = f x y in 
-            $uid:mname$.add ht (x,y) y ;
-            y
+            let newv = f x y in 
+            $uid:mname$.add ht (x,y) newv ;
+            newv
           }]
         ;
       end
      >>
 
-  | Right l -> <:str_item< declare end >>
-(*
+  | Right l ->
     let vars_types = List.mapi (fun i x -> (Printf.sprintf "v_%d" i, x)) l in
-    let (hc_args, prim_args) = List.filter_split (fun (_, (x, _)) -> x) vars_types in
-    match (hc_args, prim_args) with [
-      ([], l) ->
-      
-    ]
-*)
+    let (hc_args, prim_args) = filter_split (fun (_, (x, _)) -> x) vars_types in do {
+      assert (hc_args <> []) ;
+      if prim_args <> [] then
+        let hc_memo_name = find_matching_memo loc rc (List.map snd hc_args) in
+        let prim_memo_name = find_matching_memo loc rc (List.map snd prim_args) in
+        let hc_mname = "HT_"^hc_memo_name in
+        let prim_mname = "HT_"^prim_memo_name in
+
+        let hc_function_expr =
+          Expr.abstract_over (List.map (to_typatt loc) hc_args)
+            <:expr< $uid:prim_mname$.create 251 >> in
+
+        let hc_function_call =
+          Expr.applist <:expr< hc_f >> (List.map (to_expr loc) hc_args) in
+
+        let f_call = Expr.applist <:expr< f >> (List.map (to_expr loc) vars_types) in
+        let prim_function_expr =
+          Expr.abstract_over (List.map (to_typatt loc) prim_args) f_call in
+        
+        let prim_memo_call =
+          Expr.applist <:expr< $lid:prim_memo_name$ >>
+            [prim_function_expr; <:expr< ht >> :: List.map (to_expr loc) prim_args] in
+                               
+        let hc_call = Expr.applist <:expr< hc_f >> (List.map (to_expr loc) hc_args) in
+
+        let fun_body =
+          Expr.abstract_over (List.map (to_typatt loc) vars_types)
+          <:expr< let ht = $hc_call$ in
+                  $prim_memo_call$ >> in
+
+        <:str_item<
+          value $lid:memo_fname$ f =
+            let hc_f = $lid:hc_memo_name$ $hc_function_expr$ in
+            $fun_body$
+        >>
+      else <:str_item< declare end >>
+    }
+
   ]
 ;
 
