@@ -47,9 +47,9 @@ Almost all the examples are all with a single type, but the rewriter
 works just as well with multiple types in a recursive or non-recursive
 definition.
 
-# Details
+# Usage Details
 
-Herein, a small list of the details of that `[@@deriving ...]` attribute:
+A description of the format of that `[@@deriving ...]` attribute:
 
 1. `module_name` is not optional, and is used to specify a module
    which will be created and in which all new types and valu
@@ -79,6 +79,20 @@ Herein, a small list of the details of that `[@@deriving ...]` attribute:
    hashconsed types, or conjunctions of hashconsed types, or
    recursively conjunctions of the latter.  So for instance,
    `((term * term) * term) * term` is allowed.
+
+5. For complex memoizers, the PPX rewriter may produce error-messages like:
+```
+File "test_hashcons.ml", line 4, characters 1-1128:
+Failure: find_matching_memo: no match:
+Please declare a memoizer of type <<int>>
+```
+
+This means that (as explained below) a memoizer you declared, needs to
+recursively memoize a function of the specified type.  Because this
+isn't so common, it's simpler for the user to specify that subsidiary
+memoizer. If this becomes a real burden, I can change things so that
+the code automatically constructs it.  But this way, the subsidiary
+memoizer gets a name the user has selected.
 
 # How Does the Memoization Work?
 

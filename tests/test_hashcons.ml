@@ -8,7 +8,9 @@ type term =
 [@@deriving hashcons { module_name = LAM
                      ; memo = {
                          memo_term = [%typ: term]
+(*
                        ; memo_int = [%typ: int]
+*)
                        ; memo_int2 = [%typ: int * int]
                        ; memo_int_int_int_int = [%typ: int * int * int * int]
                        ; memo_term_int = [%typ: term * int]
@@ -16,10 +18,10 @@ type term =
                        ; memo_term_term = [%typ: term * term]
                        ; memo_term2_term = [%typ: (term * term) * term]
                        ; memo_term_term_term = [%typ: term * term * term]
-                       ; memo_term3_term = [%typ: ((term * term) * term) * term]
                        ; memo_term2_term2 = [%typ: (term * term) * term * term]
                        ; memo_term4 = [%typ: term * term * term * term]
                        ; memo_term4_int2 = [%typ: term * int * term * term * int * term]
+                       ; memo_term3_term = [%typ: ((term * term) * term) * term]
                        }
                      }]
 ;;
