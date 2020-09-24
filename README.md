@@ -32,6 +32,7 @@ type term =
 [@@deriving hashcons { module_name = LAM
                      ; memo = {
                          memo = [%typ: term]
+                       ; memo_int = [%typ: int]
                        ; memo2_int_term = [%typ: int * term]
                        ; memo2_term_term = [%typ: term * term]
                        }
@@ -74,8 +75,10 @@ Herein, a small list of the details of that `[@@deriving ...]` attribute:
    `memo2_int_term : (int -> term -> 'a) -> (int -> term -> 'a)`
    is generated that memoizes the function.
 
-   The types in the conjunction must be primitive types, or hashconsed
-   type; nothing else is supported yet.
+   The types in the conjunction must be either primitive types, or
+   hashconsed types, or conjunctions of hashconsed types, or
+   recursively conjunctions of the latter.  So for instance,
+   `((term * term) * term) * term` is allowed.
 
 # How Does the Memoization Work?
 
