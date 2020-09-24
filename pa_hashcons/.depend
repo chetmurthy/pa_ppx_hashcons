@@ -1,3 +1,3 @@
-pa_deriving_migrate.cmo pa_deriving_migrate.cmi pa_deriving_migrate.cmx: /home/chet/Hack/Ocaml/GENERIC/4.10.0/lib/unix/META /home/chet/Hack/Ocaml/GENERIC/4.10.0/lib/compiler-libs/META /home/chet/Hack/Ocaml/GENERIC/4.10.0/lib/camlp5/META /home/chet/Hack/Ocaml/GENERIC/4.10.0/lib/camlp5/META /home/chet/Hack/Ocaml/GENERIC/4.10.0/lib/pa_ppx/META /home/chet/Hack/Ocaml/GENERIC/4.10.0/lib/pa_ppx/META /home/chet/Hack/Ocaml/GENERIC/4.10.0/lib/pa_ppx/META
-pa_deriving_migrate.cmo :
-pa_deriving_migrate.cmx :
+pa_deriving_hashcons.cmo pa_deriving_hashcons.cmi pa_deriving_hashcons.cmx: 
+pa_deriving_hashcons.cmo :
+pa_deriving_hashcons.cmx :

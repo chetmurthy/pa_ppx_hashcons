@@ -24,6 +24,7 @@ depends: [
   "pcre" { >= "7.4.3" }
   "ounit2" { >= "2.2.3" }
   "bos" { >= "0.2.0" }
+  "hashcons"
 ]
 depexts: [
   [

@@ -46,7 +46,7 @@ lamhok.opt: test_hashcons.cmx lamhok.cmx
 clean::
 	rm -f  *.ppo.*
 
-EXTERNAL := $(shell $(OCAMLFIND) query -predicates byte -format '%m' $(ALL_PACKAGES))
+EXTERNAL := $(shell $(OCAMLFIND) query -predicates byte -format '%m' $(ALL_PACKAGES) | grep local-install)
 $(CMO): $(EXTERNAL)
 
 depend::

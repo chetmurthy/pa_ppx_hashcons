@@ -1,12 +1,8 @@
 : 
-lamh.cmo.ppo.cmo : \
-    test_hashcons.cmo
-lamh.cmo.ppo.cmx : \
-    test_hashcons.cmx
-lamh.cmo : \
-    test_hashcons.cmo
-lamh.cmx : \
-    test_hashcons.cmx
+lamh.cmo.ppo.cmo :
+lamh.cmo.ppo.cmx :
+lamh.cmo :
+lamh.cmx :
 test_hashcons.cmo.ppo.cmo :
 test_hashcons.cmo.ppo.cmx :
 test_hashcons.cmo :

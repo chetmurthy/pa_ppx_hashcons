@@ -44,7 +44,7 @@ local-install::
 clean::
 	rm -rf META
 
-EXTERNAL := $(shell $(OCAMLFIND) query -predicates byte -format '%m' $(PACKAGES))
+EXTERNAL := $(shell $(OCAMLFIND) query -predicates byte -format '%m' $(PACKAGES) | grep local-install)
 $(CMO) $(CMI) $(CMX): $(EXTERNAL)
 
 depend::
